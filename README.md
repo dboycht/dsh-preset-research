@@ -33,14 +33,22 @@ cmd /c npx -y @playwright/mcp@0.0.83 \
 
 模型看到的工具名是 **`mcp__browser__*`**（例：`mcp__browser__browser_navigate`）。
 
-### 1.1 站点经验库（本模式的"记忆"）
+### 1.1 站点经验库 —— **已插件化**
+
+> ⚠️ **2026-10-14：这一段描述的旧方案已被取代。** 站点经验库搬进了独立插件
+> **`dsh-site-experience`**（配置目录里带 `knowledge/INDEX.md` + `knowledge/sites/`，
+> 并自带设置页「站点经验」与门禁脚本）。本模式**不再自带**经验库、也**不再往工作区根注入 `SITES.md`**；
+> 库的位置与三条硬要求改由**插件的 `systemPrompt` 段**注入。
+> ⇒ **要看经验库的现状与用法，请读插件的 README**；本节的表格仅作历史记录保留。
+
+**（以下为旧方案，保留以便理解演进）**
 
 **目的**：同一个平台第二次遇到时**不再从零试错**；第一次遇到就**把经验记下来**。
 
 | 组件 | 位置 | 作用 |
 |---|---|---|
-| **注入存根** | `D:\code\DeepSeekHarness\SITES.md` | **唯一被自动注入系统提示的文件**（靠 `agent-instructions` 的 `instructionFileCandidates`）。⚠️ **故意只留指针、不列平台清单** —— 因为它每轮都被**全文**注入 |
-| 索引 | `…\dsh-preset-research\knowledge\INDEX.md` | 一行一个平台：域名 / 平台名 / 最后更新 / 手册路径。**按需读取** |
+| **注入存根**（**已删除**） | ~~`D:\code\DeepSeekHarness\SITES.md`~~ | 曾把"库在哪 + 三条硬要求"注入每轮系统提示 |
+| 索引（**已搬到插件**） | ~~`…\dsh-preset-research\knowledge\INDEX.md`~~ | 一行一个平台：域名 / 平台名 / 最后更新 / 手册路径 |
 | 手册 | `…\dsh-preset-research\knowledge\sites\<域名>.md` | 每平台的作业手册：入口 URL、字段名、检索式、坑、实测记录。**读一个平台的就行** |
 | 门禁 | `…\dsh-preset-research\check-sites.mjs` | **机械检查**：索引 ↔ 手册一一对应 + 手册必须有四个小节 + **注入存根仍在且指向索引**。agent 收工前必跑，exit 0 才算完 |
 

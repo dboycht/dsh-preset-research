@@ -1,5 +1,34 @@
 # 更新日志
 
+## 1.0.2 — 2026-10-14
+
+**站点经验库插件化** —— 本模式把经验库交接给独立插件 **`dsh-site-experience`**。
+
+> ⚠️ **本版本依赖插件**：装完本 preset 还必须装
+> [`dsh-site-experience`](https://github.com/dboycht/dsh-site-experience)（`plugin_manager`
+> `action: install_bundle`，target = 插件目录）。没有它，模式仍能跑浏览器检索，
+> 但**站点经验库不可用**（persona 会要求 agent 如实说明这一点，而不是假装用过经验）。
+
+### 变更
+
+- **删除**本包里的 `knowledge/`（索引 + 18 份平台手册）与 `check-sites.mjs` —— 库与门禁**唯一来源**
+  改为 `dsh-site-experience` 插件，避免两份互相漂移。
+- **删除**工作区根的注入存根 `SITES.md`，并把 `agent-instructions` 的
+  `instructionFileCandidates` 恢复为 `AGENTS.md, CLAUDE.md`（**不再注入 `SITES.md`**）。
+  ⇒ 原先整张平台表进系统提示的开销**归零**（插件改用一段提示词讲"库在哪 + 四条硬要求"）。
+- persona §零 压成一句指针，并保留兜底：**插件不可用时要如实说"不可用"**。
+- `validate.mjs` 的 `[5]` 段改为守新架构：**不许再有 `SITES.md` 候选、不许再自带 `knowledge/`、
+  persona 必须指向插件**，并核对插件目录、它的库与门禁都在。
+- 随附文档同步（README §1.1 标注旧方案已被取代；DEVELOPMENT 目录地图重画）。
+
+### 安装顺序
+
+1. 先装插件 `dsh-site-experience`；
+2. 再装本 preset（`plugin_manager action: install_bundle`）；
+3. 重启 DSH，在新会话的模式选择器里选 **「Chrome信息检索模式」**。
+
+---
+
 ## 1.0.1 — 2026-10-14
 
 首个开源版本。给 DeepSeek Harness 提供一个 **Chrome信息检索模式**（agent preset，模式 id `research`）。

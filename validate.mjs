@@ -127,37 +127,33 @@ if (doc) {
     try { mkdirSync(od, { recursive: true }); ok(`可创建/已存在: ${od}`) } catch (e) { bad(`建不了 output-dir: ${e.message}`) }
   }
 
-  // ---- 站点经验库：接线是否真的成立 ----
-  console.log('[5] 站点经验库')
+  // ---- 站点经验库：已插件化 —— 这里守"它确实交出去了、而且没有两份来源" ----
+  console.log('[5] 站点经验库（已由 dsh-site-experience 插件承担）')
   const cands = byId['agent-instructions']?.config?.instructionFileCandidates
   Array.isArray(cands) ? ok(`instructionFileCandidates = ${cands.join(', ')}`) : bad('agent-instructions 缺 instructionFileCandidates')
-  for (const need of ['AGENTS.md', 'CLAUDE.md', 'SITES.md']) {
+  for (const need of ['AGENTS.md', 'CLAUDE.md']) {
     (cands ?? []).includes(need)
       ? ok(`候选含 ${need}`)
       : bad(`候选漏了 ${need}（该字段是【整个数组替换】，漏掉会让原有指令文件静默不再加载）`)
   }
-  // ⚠️ 注入存根在【会话工作区根】、位于本包之外 ⇒ 换机器/换工作区要改这一行（或用第 1 个命令行参数覆盖）
-  const STUB = process.argv[2] ?? 'D:/code/DeepSeekHarness/SITES.md'
-  const stubText = existsSync(STUB) ? readFileSync(STUB, 'utf8') : ''
-  const stubBytes = Buffer.byteLength(stubText, 'utf8')
-  stubText !== '' ? ok(`工作区根存在 SITES.md（自动注入的前提，${stubBytes} 字节）`) : bad('工作区根缺 SITES.md —— 自动注入不会发生')
-  // ⚠️ 它是被【全文注入】系统提示的 ⇒ 必须有体积上限，否则平台一多就白付 token
-  //    （2026-10-14 就是这么涨到 14 KB 的：把整张平台表写进了存根）
-  const STUB_LIMIT = 4096
-  stubBytes <= STUB_LIMIT
-    ? ok(`存根 ${stubBytes} ≤ ${STUB_LIMIT} 字节（防它再胖回去）`)
-    : bad(`存根已 ${stubBytes} > ${STUB_LIMIT} 字节 —— 它每轮都被全文注入，平台清单请放 knowledge/INDEX.md`)
-  stubText.includes('INDEX.md') ? ok('存根指向 knowledge/INDEX.md') : bad('存根没指向 INDEX.md（agent 会找不到经验库）')
-  const indexMd = join(root, 'knowledge', 'INDEX.md')
-  existsSync(indexMd) ? ok('存在 knowledge/INDEX.md') : bad('缺 knowledge/INDEX.md')
-  const sitesDir = join(root, 'knowledge', 'sites')
-  const manuals = existsSync(sitesDir) ? readdirSync(sitesDir).filter((f) => f.endsWith('.md')) : []
-  manuals.length > 0 ? ok(`knowledge/sites/ 里有 ${manuals.length} 份手册`) : bad('knowledge/sites/ 里没有手册')
+  // ⚠️ 插件化后【必须不再】注入 SITES.md：库的位置与纪律改由插件的 systemPrompt 段承担。
+  //    留着它会让库出现两份来源（工作区根 + 插件目录）而互相漂移。
+  (cands ?? []).includes('SITES.md')
+    ? bad('候选里仍有 SITES.md —— 插件化后它与插件的库会形成两份来源，必须删掉')
+    : ok('候选里没有 SITES.md（库的唯一来源是插件）')
+  // 本包不该再自带 knowledge/（已搬进插件）
+  existsSync(join(root, 'knowledge'))
+    ? bad('本包还有 knowledge/ —— 库已搬进 dsh-site-experience，重复会漂移')
+    : ok('本包不再自带 knowledge/（唯一来源是插件）')
+  // persona 必须指向插件，并保留"插件不可用就如实说"的兜底
   const suffix = persona.suffix ?? ''
-  suffix.includes('SITES.md') ? ok('persona 指向了站点经验库存根') : bad('persona 没提站点经验库')
-  suffix.includes('INDEX.md') ? ok('persona 指向了 knowledge/INDEX.md') : bad('persona 没提索引文件')
-  suffix.includes('check-sites.mjs') ? ok('persona 要求收工前跑门禁') : bad('persona 没要求跑门禁')
-  suffix.includes('实测记录') ? ok('persona 写明了手册必需小节') : bad('persona 没写手册必需小节')
+  suffix.includes('dsh-site-experience') ? ok('persona 指向了 dsh-site-experience 插件') : bad('persona 没提插件')
+  suffix.includes('不可用') ? ok('persona 有"插件不可用"的兜底') : bad('persona 缺"插件不可用"的兜底')
+  // 配套：插件本体、它的库、它的门禁都在
+  const PLUGIN = 'D:/code/DeepSeekHarness/PluginWork/dsh-site-experience'
+  existsSync(PLUGIN) ? ok(`插件目录在: ${PLUGIN}`) : bad(`插件目录不在: ${PLUGIN}（经验库会整体失效）`)
+  existsSync(`${PLUGIN}/knowledge/INDEX.md`) ? ok('插件的 knowledge/INDEX.md 在') : bad('插件的 knowledge/INDEX.md 不在')
+  existsSync(`${PLUGIN}/check-sites.mjs`) ? ok('插件的门禁脚本在') : bad('插件的门禁脚本不在')
 }
 
 console.log(fail.length === 0 ? '\nRESULT: OK' : `\nRESULT: FAIL (${fail.length})`)
