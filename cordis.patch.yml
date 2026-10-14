@@ -1,0 +1,347 @@
+# dsh-preset-research —— 「Chrome信息检索模式」（模式 id 仍为 `research`，**不要改**）
+#
+# 目标：给 AI 检索竞赛一个专用模式 —— agent 能驱动一个【有头的真 Chrome】去题面指定的平台检索，
+#       遇到人机验证 / 登录 / 滑块时【停下来问人】，其余步骤全自动。
+#
+# 为什么做成 preset 而不是 profile 级插件
+#   • 浏览器工具只该在这个模式里出现：不污染 standard / minimal 等模式，也省工具 schema 的 token。
+#   • ⚠️ 新增模式必须写在 `insert:` 之下 —— 非 insert 条目的语义是「按 id 覆盖已有行」，
+#     id 不存在时只打 `patch: entry "<id>" not found` 然后【静默跳过】（配置看着生效、实际没挂）。
+#
+# 为什么 plugins 列表这么长
+#   • 模式声明的 `config` 是【整块替换】，没有「增量合并」这种东西 ⇒ 这里必须把随附 standard 的
+#     清单原样重述一遍，再在末尾追加 MCP 行。也意味着它【不会】自动跟进上游未来更新。
+#   • 选 standard 作基线是因为它在本机实测可用；只把不需要的一项（plugin-manager）关掉。
+#
+# 浏览器侧：@playwright/mcp（0.0.83）
+#   • 默认就是 headed；默认就是持久化 profile（本行再显式钉死位置）。
+#   • --browser chrome        用本机已装的 Chrome，免掉 Playwright 自带 ~150MB 浏览器下载。
+#   • --user-data-dir <abs>   固定持久 profile ⇒ 登录一次长期有效。
+#     ⚠️ 一个持久 profile 同时只能被一个浏览器实例占用；要并存就给别处换一个路径。
+#   • ⚠️ Windows 上必须写成 `cmd /c npx ...`：Node 的 spawn 不能直接执行 .cmd/.bat。
+#   • ⚠️ 不要依赖 PATH 里的 node/npm —— DSH 运行时只有 node + pnpm，这里走系统 Node（npx 由 cmd 解析）。
+#   • failOnStartupError: false ⇒ 浏览器没起来时 harness 仍能开，本模式降级成 web_search/web_fetch；
+#     配置里刻意配合 persona 里那条「工具不存在就立刻报告用户」，把静默失败变响。
+#
+# 两个可调旋钮（都是绝对路径，改这里就行）：
+#   • userDataDir : Chrome 持久 profile（登录态存这儿）
+#   • outputDir   : 浏览器自动命名的产物（截图等）落盘处，也是 agent 用 read_image 取证的地方
+#
+# 停用：把本文件内容改成字面量 []（空文件或纯注释文件会被解析成非数组并抛错）。
+# 改本行 config 会热重载；改插件本体需要重启 DSH。
+- insert:
+    - id: preset-research
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: research
+        name: Chrome信息检索模式
+        description: 全流程信息检索取证：驱动有头的真 Chrome 到学术库 / 专利库 / 权威原站检索，人机验证交回用户，平台经验自动沉淀成可复用手册。
+        order: 10
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: You are a coding agent powered by the {{model}} model.
+              suffix: |-
+                Your working directory is {{cwd}}.
+
+                # Chrome信息检索模式
+
+                你在本模式下是一名**检索执行体**，不是改代码的工程代理。
+                你的任务是把题**查到可复核的答案**，并在交付时说明**每一跳的来源**。
+
+                ## 零之前：去哪 —— 题面【不一定】给平台
+
+                ⚠️ **不要假定题面给了平台。**（早期版本犯过这个错：把"题面会给平台"写成前提，
+                遇到不给平台的题时整套规程**整段落空**，结果它拿通用搜索引擎当答案来源。）
+                按题面形态分两支：
+
+                - **题面给了平台**（例：「在 XX 平台中，某机构…」）⇒ 直接去那个平台，
+                  并按站点经验库里对应的手册走。
+                - **题面没给平台**（例：「论文《…》的作者…」「某专利中…」）⇒ **先判断题类型，再决定去哪**：
+                  - **学术文献类**（论文 / 学位论文 / 作者 / 导师 / 引用 / 被引）⇒ 去**学术数据库**；
+                  - **专利类** ⇒ 去**专利数据库**；
+                  - **其他事实类**（人物生平、机构信息、政策原文）⇒ 去**权威原站**（官方站点优先）。
+                  三类同一取舍：**优先用站点经验库里已有条目的平台**；没有合适的就另开一个
+                  并**当场建档**（见下一节）。
+                - **动手前必须用一句话说明"我选了哪里、为什么"** —— 让这个选择可见，
+                  别默默替用户决定（用户就是靠这句话发现你选错的）。
+
+                ⚠️ **`web_search` 的角色（重要）**：它**只是探路工具** —— 用来定位"这篇文献在哪个库"、
+                拿 DOI / 题录、"这条事实该去哪个官方站"。
+                **任何要写进答案的事实，都必须在浏览器里到原站核对过**；
+                **不要把搜索摘要当证据**，**也不要在能用数据库时一直停在搜索引擎里**。
+                一旦知道该去哪，立刻切过去。
+
+                ## 零、站点经验库：先读记忆再动手，收工必须写回
+
+                **你的上下文里有一份 `SITES.md`，它是「站点经验库」的指针存根**（由本模式自动注入）。
+                它里面写着索引在哪 —— **先去读那份索引**，再决定读哪个平台的手册。
+
+                库的根目录是 `D:\code\DeepSeekHarness\PluginWork\dsh-preset-research\knowledge\`：
+
+                - **索引**：`knowledge\INDEX.md`（一行一个平台：域名 / 平台名 / 最后更新 / 手册路径）。
+                  先读它，命中平台的**详细手册**在 `knowledge\sites\<域名>.md`
+                  —— **开工前必须读该平台的手册**，按它写好的入口、字段名、检索式走。
+                  **不要从零试错** —— 这是本模式比"通用浏览器"快的地方。
+                - **收工时必须写回**（最后一步，不可跳过）：
+                  - 平台**已有**条目 ⇒ 补充或更正你**新验证到**的事实，并把「待确认」改成「已实测（日期）」；
+                  - 平台**没有**条目 ⇒ 新建 `knowledge\sites\<域名>.md`，照已有手册的格式，
+                    必须含这四个小节：`## 入口`、`## 检索要点`、`## 坑与对策`、`## 实测记录`；
+                    并往 `knowledge\INDEX.md` 的表里加一行。
+                  - **只写你亲眼在页面上验证过的**；推断必须显式标注「待确认」。
+                - ⚠️ **不要把平台清单写进 `SITES.md`** —— 那个文件每轮都被**全文注入**系统提示，
+                  写胖了就是每轮白付 token（历史上它涨到过 14 KB）。清单只放 `INDEX.md`。
+                - 写完**跑一次门禁**，必须 exit 0（它检查索引↔手册一一对应、手册有没有缺小节、存根是否还在）：
+                  `node D:\code\DeepSeekHarness\PluginWork\dsh-preset-research\check-sites.mjs`
+                  报错就先修好再收工。
+                - **交付时必须点名**：这次用的是哪条既有经验（或新建了哪条）。
+                  **说不出来，就等于这一步没做。**
+
+                ## 一、第一原则：人机验证一律交回用户，绝不尝试绕过
+
+                出现下列任何一种情况时 —— 验证码、滑块、点选图块、短信/邮箱验证码、扫码登录、
+                「请完成安全验证」、异常流量拦截、需要登录而你没有登录态 —— **立即执行三步**：
+
+                1. 停止一切自动化尝试（不要刷新、不要重试、不要连点、不要换检索式蒙混）；
+                2. 调用 `ask_user_question`，说清**在哪个页面、是什么验证、需要你做什么动作**，
+                   请用户在浏览器窗口里手动完成后回复；
+                3. 收到用户确认后再继续，并从当前页面状态重新确认一次（不要假设已经通过）。
+
+                绝不使用验证码识别/打码服务；也绝不用「假装成别人 / 别处」的方式骗过平台
+                （伪装 IP、借用他人账号、冒充机构身份、绕过平台的访问控制）。缺权限就交回用户。
+                这条优先于任何「更快拿到答案」的考虑。
+
+                ⚠️ 边界如实说明：本模式启动的 Chrome 带着 Playwright 的**出厂默认**参数
+                `--disable-blink-features=AutomationControlled`，它会隐藏「这是自动化浏览器」这一信号。
+                这是 Playwright 自带的默认，**不是**本模式额外加的规避措施；而本模式**不在此之上
+                再叠加任何反检测手段** —— 不装 stealth 插件、不改 UA / Canvas / WebGL 指纹、不做 IP 轮换。
+                这条边界**不许自行放宽**；需要更强的隐蔽性时，交回用户决定，不要自己动手。
+
+                ## 二、运行时自检
+
+                你的浏览器工具名形如 `mcp__browser__*`。
+                **若这些工具不存在**（浏览器没就绪 / MCP 未连上），立刻用 `ask_user_question`
+                告知用户，并说明可以先用 `web_search` / `web_fetch` 降级检索。
+                不要假装浏览器可用，也不要静默改用别的路子糊过去。
+
+                ## 三、标准作业流程
+
+                1. **解析题目**：**题面给平台了吗**？（没给就走「零之前」那一节的分支）、题型
+                   （学术文献 / 专利 / 其他事实）、主体（机构/作者/申请人/导师）、时间范围、主题词、
+                   条件限定（如「法律状态 = 授权」「发明专利」），以及最终要的量
+                   （一个数字 / 一份清单 / 某一篇文献）。
+                2. **确定去哪**（题面没给平台时这一步**不能跳**）：按「零之前」的分支选数据库或原站，
+                   并**用一句话说明你选了哪里、为什么**。
+                3. **先写检索式再动手**：拆关键词与同义词，准备多组等价检索式；
+                   时间、状态、类型这类结构化条件优先用平台的**高级检索**，不要只靠全文关键词。
+                4. **用浏览器检索**：每步之后读一次页面快照确认状态，不要连续盲点。
+                   翻页/筛选/导出时，**把你用过的检索式和路径记下来**。
+                5. ⭐ **多跳题必须逐跳落权威来源**：像「论文 → 作者 → 硕士阶段的导师 → 导师出生年」
+                   这种链，**每一跳都要有来源**：
+                   - 「学位论文 → 导师」通常靠**学位论文题录里的「导师」字段**（不是靠猜作者顺序）；
+                   - 「导师 → 出生年」通常**不在文献库里**，要去其**主页 / 学校官网官方简介**。
+                   **某一跳找不到时，如实说"卡在第几跳"**，绝不用相邻跳的推断补齐。
+                   交付时把每一跳的来源逐条列出。
+                6. **落数字前至少两个视角核对**：例如「平台给出的结果计数」对「抽样若干条详情页」；
+                   或换一组等价检索式复核。不一致时以**更窄、更可核对**的那条为准，并写清分歧。
+                7. **交付**：答案 + 平台与检索式 + 关键证据（页面标题 / URL / 截图）+ 不确定之处
+                   + **逐跳来源**。
+
+                ## 四、证据纪律
+
+                - 关键页面用浏览器截图工具留证，**截图与页面文本都落到工作目录**，方便用户复核。
+                - 只有「页面上真的写着」才算证据；**你的记忆不算证据**。
+                - 绝不编造数字、文献标题或 URL。查不到就说查不到，并说明卡在哪一步。
+                - 时间紧时优先保「答案可复核」，而不是「看起来很快」。
+
+                ## 五、与用户协作的语气
+
+                本模式下用户就在旁边盯着浏览器窗口。需要人介入时**直接、简短地说要做什么**
+                （「第 2 个标签页出现滑块，请拖动完成」），不要长篇解释。
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+              # ⚠️ 这个字段是【整个数组替换】—— 必须把 AGENTS.md / CLAUDE.md 一并重述，
+              #    漏写它们会让用户的 AGENTS.md 在本模式里【不再加载】。
+              # 加 SITES.md 是为了让「站点经验库的指针存根」【自动注入】系统提示：
+              #    这样"agent 记不记得先去读经验"就不再是一个可能失败的风险点。
+              #    （它注入的是「项目根 → 会话工作目录」这条链上的候选文件，
+              #      所以 SITES.md 必须放在工作区根。）
+              # ⚠️ 2026-10-14 重构：**注入的是 SITES.md 全文，所以它必须短**。
+              #    原先它把 18 个平台的整张表都写上（14 KB），每轮请求白付几千 token；
+              #    现在它只剩"指针"（约 1.8 KB），平台清单在 knowledge/INDEX.md 里按需读。
+              #    要加平台就往 INDEX.md 加，**别往这个存根里加**（validate.mjs 有体积上限断言守着）。
+              instructionFileCandidates:
+                - AGENTS.md
+                - CLAUDE.md
+                - SITES.md
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: command-goal
+            name: '@deepseek-ai/dsh-command-goal'
+          - id: tool-goal
+            name: '@deepseek-ai/dsh-tool-goal'
+          - id: planning
+            name: cordis:group
+            group: true
+            isolate:
+              planMode: true
+            config:
+              - id: plan-mode
+                name: '@deepseek-ai/dsh-plan-mode'
+                config:
+                  section: |
+                    You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+
+                    Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
+
+                    The tool catalog stays the same across modes for request-cache stability. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed to keep the tool catalog unchanged. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs in exit_plan_mode.
+
+                    Resolve discoverable facts by inspection. Use ask_user_question only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask the user where code lives or how current behavior works when you can find out.
+
+                    Make the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.
+
+                    When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+          - id: delegation
+            name: cordis:group
+            group: true
+            isolate:
+              workflowEngine: true
+            config:
+              - id: tool-subagent-control
+                name: '@deepseek-ai/dsh-tool-subagent-control'
+              - id: tool-subagent-list-agents
+                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+              - id: tool-subagent
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: subagent
+                  modelSelectionSettings: true
+                  backgroundMode: continuable
+              - id: tool-subagent-fork
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: fork
+                  toolName: subagent_fork
+                  backgroundMode: continuable
+              - id: tool-subagent-codex
+                name: '@deepseek-ai/dsh-tool-subagent'
+                disabled: true
+                config:
+                  provider: codex
+                  toolName: subagent_codex
+                  backgroundMode: one-shot
+                  maxDepth: provider-managed
+              - id: tool-subagent-claude-code
+                name: '@deepseek-ai/dsh-tool-subagent'
+                disabled: true
+                config:
+                  provider: claude-code
+                  toolName: subagent_claude_code
+                  backgroundMode: one-shot
+                  maxDepth: provider-managed
+              - id: workflow-ptc
+                name: '@deepseek-ai/dsh-workflow-ptc'
+                config:
+                  provider: spawn
+              - id: tool-workflow
+                name: '@deepseek-ai/dsh-tool-workflow'
+              - id: tool-ralph
+                name: '@deepseek-ai/dsh-tool-ralph'
+                disabled: true
+                config:
+                  subagentProvider: spawn
+                  maxRounds: 64
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+          # 竞赛模式里刻意不给插件管理工具：不允许一边考试一边改 profile。
+          - id: tool-plugin-manager
+            name: '@deepseek-ai/dsh-plugin-manager/tools'
+            disabled: true
+
+          # ── 本模式的核心增量：浏览器自动化（Playwright MCP） ──────────────────
+          # 工具会以 mcp__browser__<name> 出现在模型工具表里（例：mcp__browser__browser_navigate）。
+          - id: mcp-browser
+            name: '@deepseek-ai/dsh-mcp-client'
+            config:
+              serverName: browser
+              transport: stdio
+              # Windows 上必须 cmd /c，否则 Node 的 spawn 跑不了 npx 这个 .cmd
+              command: cmd
+              args:
+                - /c
+                - npx
+                - '-y'
+                - '@playwright/mcp@0.0.83'
+                # 用本机已装的 Chrome（免掉 Playwright 自带的 ~150MB 浏览器下载）
+                - '--browser'
+                - chrome
+                # 持久 profile：登录一次长期有效。⚠️ 同一路径同时只能有一个浏览器实例。
+                - '--user-data-dir'
+                # ⚠️ 这里【不写死本机用户名】：用 !!js 从 %USERPROFILE% 推导（开源包里不能出现用户名）。
+                #    已实测：推导值与原先的字面量【逐字符相同】、且该目录已存在 ⇒ 登录态不受影响。
+                - !!js process.getBuiltinModule('node:path').join(process.env.USERPROFILE, '.dsh', 'browser-profile-research')
+                # 自动命名的截图等落盘到这里，agent 可用 read_image 取证
+                - '--output-dir'
+                - 'D:\code\DeepSeekHarness\PluginWork\dsh-preset-research\runtime'
+                # ⚠️ 产物上限：超过这个字节数，Playwright **自己**淘汰最旧的输出文件。
+                #    没有它，runtime/ 会无上限膨胀（2026-10-14 实测：累积到 6.4 MB / 319 个文件）。
+                #    ⇒ 把"定期手工清理"换成"工具自己控上限"。
+                - '--output-max-size'
+                - '16777216'
+              # ⚠️ 掐掉 playwright 的 postinstall 浏览器下载（~150MB）：我们用系统 Chrome（--browser chrome），
+              #    不需要 Playwright 自带的那套浏览器。没有这一条，首次启动会白等一次大下载。
+              #    （mcp-client 会把这里的环境变量【合并】到已清洗的父环境之上。）
+              env:
+                PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+              # 检索页面加载慢是常态，比默认 60s 放宽
+              toolCallTimeoutMs: 180000
+              # 浏览器起不来时不让整个模式挂掉（降级到 web_search），由 persona 里那条自检负责报出来
+              failOnStartupError: false

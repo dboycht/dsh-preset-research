@@ -1,0 +1,21 @@
+{
+  "name": "dsh-preset-research",
+  "version": "1.0.1",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "全流程信息检索取证：驱动有头的真 Chrome 到学术库 / 专利库 / 权威原站检索，人机验证交回用户，平台经验自动沉淀成可复用手册。",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "agent-preset",
+    "playwright-mcp",
+    "browser-automation",
+    "web-research"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
